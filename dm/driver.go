@@ -3,10 +3,11 @@ package dm
 import (
 	"database/sql"
 	"fmt"
-	"github.com/pkg/errors"
 	"math"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 
 	_ "gitee.com/chunanyong/dm"
 	"gorm.io/gorm"
