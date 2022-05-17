@@ -1,8 +1,8 @@
 # driver
 
 #### 介绍
-> 该项目是基于GORM Driver接口实现各种方言数据库包
 
+> 该项目是基于 GORM Driver 接口实现各种方言数据库包
 
 #### 安装教程
 
@@ -15,13 +15,13 @@ g go get gitee.com/jun3372/driver/dm
 
 ```go
 import (
-"gitee.com/jun3372/driver/dm"
-"gorm.io/gorm"
+    "gitee.com/jun3372/driver/dm"
+    "gorm.io/gorm"
 )
 
 func main() {
-dsn := "dm://SYSDBA:SYSDBA@localhost:5236"
-db, err := gorm.Open(dm.Open(dsn), &gorm.Config{})
+    dsn := "dm://SYSDBA:SYSDBA@localhost:5236"
+    db, err := gorm.Open(dm.Open(dsn), &gorm.Config{})
 }
 ```
 
