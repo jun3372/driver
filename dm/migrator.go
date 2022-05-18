@@ -224,19 +224,49 @@ func (m Migrator) ColumnTypes(value interface{}) ([]gorm.ColumnType, error) {
 	return columnTypes, err
 }
 
+// CurrentDatabase returns current database name
 func (m Migrator) CurrentDatabase() (name string) {
-	baseName := m.Migrator.CurrentDatabase()
-	m.DB.Raw(
-		//TODO:: 还需要验证当前数据库的条件，多个数据库从中通用的表名可能存在bug
-		"select COUNT(1) from dba_segments where SEGMENT_NAME=?",
-		baseName,
-		&name,
-	)
+	_ = m.DB.Raw("SELECT USER()").Row().Scan(&name)
 	return
 }
+
+// func (m Migrator) CurrentDatabase() (name string) {
+// 	baseName := m.Migrator.CurrentDatabase()
+// 	m.DB.Raw(
+// 		"SELECT count(*) FROM all_constraints WHERE OWNER = ? AND table_name = '?' LIMIT 1",
+// 		baseName+"%", baseName).Scan(&name)
+// 	return
+// }
 
 func (m Migrator) GetTables() (tableList []string, err error) {
 	err = m.DB.Raw("SELECT TABLE_NAME FROM information_schema.tables where TABLE_SCHEMA=?", m.CurrentDatabase()).
 		Scan(&tableList).Error
 	return
+}
+
+// HasTable returns table exists or not for value, value could be a struct or string
+func (m Migrator) HasTable(value interface{}) bool {
+	var count int64
+	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		user := m.CurrentDatabase()
+		sqlStr := "SELECT count(*) FROM all_constraints WHERE OWNER = ? AND TABLE_NAME = ?"
+		return m.DB.Raw(sqlStr, user, stmt.Table).Row().Scan(&count)
+	})
+	return count > 0
+}
+
+func (m Migrator) AutoMigrate(values ...interface{}) error {
+	for _, value := range m.ReorderModels(values, true) {
+		if !m.HasTable(value) {
+			if err := m.CreateTable(value); err != nil {
+				return err
+			}
+		} else {
+			// tx := m.DB.Session(&gorm.Session{})
+			// return tx.Migrator().AutoMigrate(values...)
+
+			return nil
+		}
+	}
+	return nil
 }

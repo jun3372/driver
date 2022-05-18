@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
-
 	_ "gitee.com/chunanyong/dm"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
@@ -84,8 +82,6 @@ func (dialector Dialector) Apply(config *gorm.Config) error {
 }
 
 func (dialector Dialector) Initialize(db *gorm.DB) (err error) {
-	//ctx := context.Background()
-
 	// register callbacks
 	callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{
 		CreateClauses: CreateClauses,
@@ -95,7 +91,7 @@ func (dialector Dialector) Initialize(db *gorm.DB) (err error) {
 	})
 
 	if dialector.DriverName == "" {
-		dialector.DriverName = "dm"
+		dialector.DriverName = dialector.Name()
 	}
 
 	if dialector.DefaultDatetimePrecision == nil {
@@ -107,7 +103,7 @@ func (dialector Dialector) Initialize(db *gorm.DB) (err error) {
 	} else {
 		db.ConnPool, err = sql.Open(dialector.DriverName, dialector.DSN)
 		if err != nil {
-			return errors.Wrap(err, "sql open failed")
+			return err
 		}
 	}
 
@@ -224,7 +220,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 		case '`':
 			continuousBacktick++
 			if continuousBacktick == 2 {
-				//writer.WriteString("``")
+				// writer.WriteString("``")
 				continuousBacktick = 0
 			}
 		case '.':
@@ -232,32 +228,32 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 				shiftDelimiter = 0
 				underQuoted = false
 				continuousBacktick = 0
-				//writer.WriteByte('`')
+				// writer.WriteByte('`')
 			}
 			writer.WriteByte(v)
 			continue
 		default:
 			if shiftDelimiter-continuousBacktick <= 0 && !underQuoted {
-				//writer.WriteByte('`')
+				// writer.WriteByte('`')
 				underQuoted = true
 				if selfQuoted = continuousBacktick > 0; selfQuoted {
 					continuousBacktick -= 1
 				}
 			}
 
-			//for ; continuousBacktick > 0; continuousBacktick -= 1 {
-			//	writer.WriteString("``")
-			//}
+			for ; continuousBacktick > 0; continuousBacktick -= 1 {
+				writer.WriteString("``")
+			}
 
 			writer.WriteByte(v)
 		}
 		shiftDelimiter++
 	}
 
-	//if continuousBacktick > 0 && !selfQuoted {
-	//	writer.WriteString("``")
-	//}
-	//writer.WriteByte('`')
+	if continuousBacktick > 0 && !selfQuoted {
+		writer.WriteString("``")
+	}
+	// writer.WriteByte('`')
 }
 
 func (dialector Dialector) Explain(sql string, vars ...interface{}) string {
@@ -305,6 +301,8 @@ func (dialector Dialector) getSchemaStringType(field *schema.Field) string {
 			// TEXT, GEOMETRY or JSON column can't have a default value
 			if field.PrimaryKey || field.HasDefaultValue || hasIndex {
 				size = 191 // utf8mb4
+			} else {
+				size = 255
 			}
 		}
 	}
@@ -349,7 +347,7 @@ func (dialector Dialector) getSchemaBytesType(field *schema.Field) string {
 }
 
 func (dialector Dialector) getSchemaIntAndUnitType(field *schema.Field) string {
-	sqlType := "bigint"
+	sqlType := "INTEGER"
 	switch {
 	case field.Size <= 8:
 		sqlType = "tinyint"
@@ -361,13 +359,18 @@ func (dialector Dialector) getSchemaIntAndUnitType(field *schema.Field) string {
 		sqlType = "int"
 	}
 
-	if field.DataType == schema.Uint {
-		sqlType += " unsigned"
-	}
+	// if field.DataType == schema.Uint {
+	// 	sqlType += " unsigned"
+	// }
 
-	//if field.AutoIncrement {
-	//	sqlType += " AUTO_INCREMENT"
-	//}
+	// if field.PrimaryKey {
+	// 	sqlType += " PRIMARY KEY"
+	// }
+
+	if field.AutoIncrement {
+		// sqlType += " AUTO_INCREMENT"
+		sqlType += " IDENTITY(1,1)"
+	}
 
 	return sqlType
 }
