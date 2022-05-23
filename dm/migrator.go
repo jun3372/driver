@@ -226,7 +226,7 @@ func (m Migrator) ColumnTypes(value interface{}) ([]gorm.ColumnType, error) {
 
 // CurrentDatabase returns current database name
 func (m Migrator) CurrentDatabase() (name string) {
-	_ = m.DB.Raw("SELECT USER()").Row().Scan(&name)
+	_ = m.DB.Raw("SELECT user FROM DUAL;").Row().Scan(&name)
 	return
 }
 
@@ -249,7 +249,7 @@ func (m Migrator) HasTable(value interface{}) bool {
 	var count int64
 	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		user := m.CurrentDatabase()
-		sqlStr := "SELECT count(*) FROM all_constraints WHERE OWNER = ? AND TABLE_NAME = ?"
+		sqlStr := "SELECT count(1) FROM all_constraints WHERE OWNER = ? AND TABLE_NAME = ?"
 		return m.DB.Raw(sqlStr, user, stmt.Table).Row().Scan(&count)
 	})
 	return count > 0
