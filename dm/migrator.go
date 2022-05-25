@@ -249,7 +249,7 @@ func (m Migrator) HasTable(value interface{}) bool {
 	var count int64
 	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		user := m.CurrentDatabase()
-		sql := "SELECT count(*) FROM all_constraints WHERE OWNER = ? AND TABLE_NAME = ?"
+		sql := "SELECT count(1) FROM all_constraints WHERE OWNER = ? AND TABLE_NAME = ?"
 		return m.DB.Raw(sql, user, strings.ToUpper(stmt.Table)).Row().Scan(&count)
 	})
 	return count > 0
