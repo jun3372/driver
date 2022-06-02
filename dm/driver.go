@@ -220,7 +220,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 		case '`':
 			continuousBacktick++
 			if continuousBacktick == 2 {
-				// writer.WriteString("``")
+				writer.WriteString("``")
 				continuousBacktick = 0
 			}
 		case '.':
@@ -228,13 +228,13 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 				shiftDelimiter = 0
 				underQuoted = false
 				continuousBacktick = 0
-				// writer.WriteByte('`')
+				writer.WriteByte('"')
 			}
 			writer.WriteByte(v)
 			continue
 		default:
 			if shiftDelimiter-continuousBacktick <= 0 && !underQuoted {
-				// writer.WriteByte('`')
+				writer.WriteByte('"')
 				underQuoted = true
 				if selfQuoted = continuousBacktick > 0; selfQuoted {
 					continuousBacktick -= 1
@@ -253,7 +253,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	if continuousBacktick > 0 && !selfQuoted {
 		writer.WriteString("``")
 	}
-	// writer.WriteByte('`')
+	writer.WriteByte('"')
 }
 
 func (dialector Dialector) Explain(sql string, vars ...interface{}) string {
@@ -301,8 +301,6 @@ func (dialector Dialector) getSchemaStringType(field *schema.Field) string {
 			// TEXT, GEOMETRY or JSON column can't have a default value
 			if field.PrimaryKey || field.HasDefaultValue || hasIndex {
 				size = 191 // utf8mb4
-			} else {
-				size = 255
 			}
 		}
 	}
@@ -312,7 +310,8 @@ func (dialector Dialector) getSchemaStringType(field *schema.Field) string {
 	}
 
 	if size > int(math.Pow(2, 24)) || size <= 0 {
-		return "longtext"
+		// return "longtext"
+		size = 255
 	}
 
 	return fmt.Sprintf("varchar(%d)", size)
@@ -347,7 +346,7 @@ func (dialector Dialector) getSchemaBytesType(field *schema.Field) string {
 }
 
 func (dialector Dialector) getSchemaIntAndUnitType(field *schema.Field) string {
-	sqlType := "INTEGER"
+	sqlType := "bigint"
 	switch {
 	case field.Size <= 8:
 		sqlType = "tinyint"
@@ -359,13 +358,9 @@ func (dialector Dialector) getSchemaIntAndUnitType(field *schema.Field) string {
 		sqlType = "int"
 	}
 
-	// if field.DataType == schema.Uint {
-	// 	sqlType += " unsigned"
-	// }
-
-	// if field.PrimaryKey {
-	// 	sqlType += " PRIMARY KEY"
-	// }
+	if field.DataType == schema.Uint {
+		// sqlType += " unsigned"
+	}
 
 	if field.AutoIncrement {
 		// sqlType += " AUTO_INCREMENT"
