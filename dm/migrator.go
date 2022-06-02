@@ -122,6 +122,80 @@ func (m Migrator) DropTable(values ...interface{}) error {
 	})
 }
 
+// BuildIndexOptionsInterface build index options interface
+type BuildIndexOptionsInterface interface {
+	BuildIndexOptions([]schema.IndexOption, *gorm.Statement) []interface{}
+}
+
+// HasTable returns table exists or not for value, value could be a struct or string
+func (m Migrator) HasTable(value interface{}) bool {
+	var count int64
+	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		user := m.DB.Migrator().CurrentDatabase()
+		sql := "SELECT count(1) FROM all_constraints WHERE OWNER = ? AND TABLE_NAME = ?"
+		return m.DB.Raw(sql, user, stmt.Table).Row().Scan(&count)
+	})
+	return count > 0
+}
+
+// CreateTable create table in database for values
+func (m Migrator) CreateTable(values ...interface{}) error {
+	for _, value := range m.ReorderModels(values, false) {
+		tx := m.DB.Session(&gorm.Session{})
+		if err := m.RunWithValue(value, func(stmt *gorm.Statement) (errr error) {
+			var (
+				createTableSQL          = "CREATE TABLE ? ("
+				values                  = []interface{}{m.CurrentTable(stmt)}
+				hasPrimaryKeyInDataType bool
+			)
+
+			for _, dbName := range stmt.Schema.DBNames {
+				field := stmt.Schema.FieldsByDBName[dbName]
+				if !field.IgnoreMigration {
+					createTableSQL += "? ?"
+					hasPrimaryKeyInDataType = hasPrimaryKeyInDataType || strings.Contains(strings.ToUpper(string(field.DataType)), "PRIMARY KEY")
+					values = append(values, clause.Column{Name: dbName}, m.DB.Migrator().FullDataTypeOf(field))
+					createTableSQL += ","
+				}
+			}
+
+			if !hasPrimaryKeyInDataType && len(stmt.Schema.PrimaryFields) > 0 {
+				createTableSQL += "PRIMARY KEY ?,"
+				primaryKeys := []interface{}{}
+				for _, field := range stmt.Schema.PrimaryFields {
+					primaryKeys = append(primaryKeys, clause.Column{Name: field.DBName})
+				}
+
+				values = append(values, primaryKeys)
+			}
+
+			for _, idx := range stmt.Schema.ParseIndexes() {
+				defer func(value interface{}, name string) {
+					if errr == nil {
+						errr = tx.Migrator().CreateIndex(value, name)
+					}
+				}(value, idx.Name)
+			}
+
+			for _, chk := range stmt.Schema.ParseCheckConstraints() {
+				createTableSQL += "CONSTRAINT ? CHECK (?),"
+				values = append(values, clause.Column{Name: chk.Name}, clause.Expr{SQL: chk.Constraint})
+			}
+
+			createTableSQL = strings.TrimSuffix(createTableSQL, ",") + ")"
+			if tableOption, ok := m.DB.Get("gorm:table_options"); ok {
+				createTableSQL += fmt.Sprint(tableOption)
+			}
+
+			errr = tx.Exec(createTableSQL, values...).Error
+			return errr
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m Migrator) DropConstraint(value interface{}, name string) error {
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		constraint, chk, table := m.GuessConstraintAndTable(stmt, name)
@@ -138,135 +212,93 @@ func (m Migrator) DropConstraint(value interface{}, name string) error {
 	})
 }
 
-// ColumnTypes column types return columnTypes,error
+// ColumnTypes return columnTypes []gorm.ColumnType and execErr error
 func (m Migrator) ColumnTypes(value interface{}) ([]gorm.ColumnType, error) {
 	columnTypes := make([]gorm.ColumnType, 0)
-	err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
-		var (
-			currentDatabase = m.DB.Migrator().CurrentDatabase()
-			columnTypeSQL   = "SELECT column_name, column_default, is_nullable = 'YES', data_type, character_maximum_length, column_type, column_key, extra, column_comment, numeric_precision, numeric_scale "
-			rows, err       = m.DB.Session(&gorm.Session{}).Table(stmt.Table).Limit(1).Rows()
-		)
-
+	execErr := m.RunWithValue(value, func(stmt *gorm.Statement) (err error) {
+		rows, err := m.DB.Session(&gorm.Session{}).Table(stmt.Table).Limit(1).Rows()
 		if err != nil {
 			return err
 		}
 
-		rawColumnTypes, err := rows.ColumnTypes()
+		defer func() {
+			err = rows.Close()
+		}()
 
-		if err := rows.Close(); err != nil {
+		var rawColumnTypes []*sql.ColumnType
+		rawColumnTypes, err = rows.ColumnTypes()
+		if err != nil {
 			return err
 		}
 
-		if !m.DisableDatetimePrecision {
-			columnTypeSQL += ", datetime_precision "
-		}
-		columnTypeSQL += "FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ORDINAL_POSITION"
-
-		columns, rowErr := m.DB.Raw(columnTypeSQL, currentDatabase, stmt.Table).Rows()
-		if rowErr != nil {
-			return rowErr
+		for _, c := range rawColumnTypes {
+			columnTypes = append(columnTypes, ColumnType{SQLColumnType: c})
 		}
 
-		defer columns.Close()
-
-		for columns.Next() {
-			var (
-				column            migrator.ColumnType
-				datetimePrecision sql.NullInt64
-				extraValue        sql.NullString
-				columnKey         sql.NullString
-				values            = []interface{}{
-					&column.NameValue, &column.DefaultValueValue, &column.NullableValue, &column.DataTypeValue, &column.LengthValue, &column.ColumnTypeValue, &columnKey, &extraValue, &column.CommentValue, &column.DecimalSizeValue, &column.ScaleValue,
-				}
-			)
-
-			if !m.DisableDatetimePrecision {
-				values = append(values, &datetimePrecision)
-			}
-
-			if scanErr := columns.Scan(values...); scanErr != nil {
-				return scanErr
-			}
-
-			column.PrimaryKeyValue = sql.NullBool{Bool: false, Valid: true}
-			column.UniqueValue = sql.NullBool{Bool: false, Valid: true}
-			switch columnKey.String {
-			case "PRI":
-				column.PrimaryKeyValue = sql.NullBool{Bool: true, Valid: true}
-			case "UNI":
-				column.UniqueValue = sql.NullBool{Bool: true, Valid: true}
-			}
-
-			if strings.Contains(extraValue.String, "auto_increment") {
-				column.AutoIncrementValue = sql.NullBool{Bool: true, Valid: true}
-			}
-
-			column.DefaultValueValue.String = strings.Trim(column.DefaultValueValue.String, "'")
-
-			if datetimePrecision.Valid {
-				column.DecimalSizeValue = datetimePrecision
-			}
-
-			for _, c := range rawColumnTypes {
-				if c.Name() == column.NameValue.String {
-					column.SQLColumnType = c
-					break
-				}
-			}
-
-			columnTypes = append(columnTypes, column)
-		}
-
-		return nil
+		return
 	})
 
-	return columnTypes, err
+	return columnTypes, execErr
 }
 
-// CurrentDatabase returns current database name
-func (m Migrator) CurrentDatabase() (name string) {
-	_ = m.DB.Raw("SELECT user FROM DUAL").Row().Scan(&name)
-	return
-}
-
-// func (m Migrator) CurrentDatabase() (name string) {
-// 	baseName := m.Migrator.CurrentDatabase()
-// 	m.DB.Raw(
-// 		"SELECT count(*) FROM all_constraints WHERE OWNER = ? AND table_name = '?' LIMIT 1",
-// 		baseName+"%", baseName).Scan(&name)
-// 	return
-// }
-
-func (m Migrator) GetTables() (tableList []string, err error) {
-	err = m.DB.Raw("SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA=?", m.CurrentDatabase()).
-		Scan(&tableList).Error
-	return
-}
-
-// HasTable returns table exists or not for value, value could be a struct or string
-func (m Migrator) HasTable(value interface{}) bool {
+// HasIndex check has index `name` or not
+func (m Migrator) HasIndex(value interface{}, name string) bool {
 	var count int64
-	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
-		user := m.CurrentDatabase()
-		sql := "SELECT count(1) FROM all_constraints WHERE OWNER = ? AND TABLE_NAME = ?"
-		return m.DB.Raw(sql, user, strings.ToUpper(stmt.Table)).Row().Scan(&count)
+	m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		currentDatabase := m.DB.Migrator().CurrentDatabase()
+		if idx := stmt.Schema.LookIndex(name); idx != nil {
+			name = idx.Name
+		}
+
+		return m.DB.Raw(
+			"SELECT COUNT(1) from DBA_IND_COLUMNS WHERE TABLE_OWNER = ? AND TABLE_NAME = ? AND INDEX_NAME = ?",
+			currentDatabase, stmt.Table, name,
+		).Row().Scan(&count)
 	})
+
 	return count > 0
 }
 
-func (m Migrator) AutoMigrate(values ...interface{}) error {
-	for _, value := range m.ReorderModels(values, true) {
-		if !m.HasTable(value) {
-			if err := m.CreateTable(value); err != nil {
-				return err
-			}
-		} else {
-			// tx := m.DB.Session(&gorm.Session{})
-			// return tx.Migrator().AutoMigrate(values...)
+// CreateIndex create index `name`
+func (m Migrator) CreateIndex(value interface{}, name string) error {
+	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		if idx := stmt.Schema.LookIndex(name); idx != nil {
+			opts := m.DB.Migrator().(BuildIndexOptionsInterface).BuildIndexOptions(idx.Fields, stmt)
+			values := []interface{}{clause.Column{Name: idx.Name}, m.CurrentTable(stmt), opts}
 
-			return nil
+			createIndexSQL := "CREATE "
+			if idx.Class != "" {
+				createIndexSQL += idx.Class + " "
+			}
+			createIndexSQL += "INDEX ? ON ??"
+
+			if idx.Type != "" {
+				createIndexSQL += " USING " + idx.Type
+			}
+
+			if idx.Comment != "" {
+				createIndexSQL += fmt.Sprintf(" COMMENT '%s'", idx.Comment)
+			}
+
+			if idx.Option != "" {
+				createIndexSQL += " " + idx.Option
+			}
+
+			return m.DB.Exec(createIndexSQL, values...).Error
 		}
-	}
-	return nil
+
+		return fmt.Errorf("failed to create index with name %s", name)
+	})
+}
+
+func (m Migrator) CurrentDatabase() string {
+	var name string
+	_ = m.DB.Raw("SELECT user FROM DUAL").Row().Scan(&name)
+	return name
+}
+
+func (m Migrator) GetTables() (tableList []string, err error) {
+	err = m.DB.Raw("SELECT TABLE_NAME FROM DBA_TABLES WHERE OWNER=?", m.DB.Migrator().CurrentDatabase()).
+		Scan(&tableList).Error
+	return tableList, err
 }
