@@ -8,7 +8,7 @@
 
 ```shell
 # 达梦数据库
-g go get gitee.com/jun3372/driver/dm
+go get gitee.com/jun3372/driver/dm
 ```
 
 #### 使用说明
@@ -24,10 +24,3 @@ func main() {
     db, err := gorm.Open(dm.Open(dsn), &gorm.Config{})
 }
 ```
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
