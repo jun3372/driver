@@ -220,7 +220,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 		case '`':
 			continuousBacktick++
 			if continuousBacktick == 2 {
-				writer.WriteString("``")
+				writer.WriteString(`""`)
 				continuousBacktick = 0
 			}
 		case '.':
@@ -242,7 +242,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 			}
 
 			for ; continuousBacktick > 0; continuousBacktick -= 1 {
-				writer.WriteString("``")
+				writer.WriteString(`""`)
 			}
 
 			writer.WriteByte(v)
@@ -251,7 +251,7 @@ func (dialector Dialector) QuoteTo(writer clause.Writer, str string) {
 	}
 
 	if continuousBacktick > 0 && !selfQuoted {
-		writer.WriteString("``")
+		writer.WriteString(`""`)
 	}
 	writer.WriteByte('"')
 }
@@ -263,7 +263,7 @@ func (dialector Dialector) Explain(sql string, vars ...interface{}) string {
 func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 	switch field.DataType {
 	case schema.Bool:
-		return "boolean"
+		return "BIT"
 	case schema.Int, schema.Uint:
 		return dialector.getSchemaIntAndUnitType(field)
 	case schema.Float:
@@ -281,14 +281,14 @@ func (dialector Dialector) DataTypeOf(field *schema.Field) string {
 
 func (dialector Dialector) getSchemaFloatType(field *schema.Field) string {
 	if field.Precision > 0 {
-		return fmt.Sprintf("decimal(%d, %d)", field.Precision, field.Scale)
+		return fmt.Sprintf("DECIMAL(%d, %d)", field.Precision, field.Scale)
 	}
 
 	if field.Size <= 32 {
-		return "float"
+		return "FLOAT"
 	}
 
-	return "double"
+	return "DOUBLE"
 }
 
 func (dialector Dialector) getSchemaStringType(field *schema.Field) string {
@@ -310,7 +310,6 @@ func (dialector Dialector) getSchemaStringType(field *schema.Field) string {
 	}
 
 	if size > int(math.Pow(2, 24)) || size <= 0 {
-		// return "longtext"
 		size = 255
 	}
 
@@ -328,9 +327,9 @@ func (dialector Dialector) getSchemaTimeType(field *schema.Field) string {
 	}
 
 	if field.NotNull || field.PrimaryKey {
-		return "datetime" + precision
+		return "TIMESTAMP" + precision
 	}
-	return "datetime" + precision + " NULL"
+	return "TIMESTAMP" + precision + " NULL"
 }
 
 func (dialector Dialector) getSchemaBytesType(field *schema.Field) string {
